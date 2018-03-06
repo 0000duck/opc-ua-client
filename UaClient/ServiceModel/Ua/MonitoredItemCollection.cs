@@ -10,15 +10,15 @@ namespace Workstation.ServiceModel.Ua
     /// <summary>
     /// A collection of <see cref="MonitoredItemBase"/>.
     /// </summary>
-    public class MonitoredItemBaseCollection : ObservableCollection<MonitoredItemBase>
+    public class MonitoredItemCollection : ObservableCollection<MonitoredItemBase>
     {
         private Dictionary<string, MonitoredItemBase> nameMap = new Dictionary<string, MonitoredItemBase>();
         private Dictionary<uint, MonitoredItemBase> clientIdMap = new Dictionary<uint, MonitoredItemBase>();
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="MonitoredItemBaseCollection"/> class.
+        /// Initializes a new instance of the <see cref="MonitoredItemCollection"/> class.
         /// </summary>
-        public MonitoredItemBaseCollection()
+        public MonitoredItemCollection()
         {
         }
 
@@ -67,11 +67,11 @@ namespace Workstation.ServiceModel.Ua
             }
         }
 
-        public static implicit operator MonitoredItemBaseCollection(MonitoredItemBase[] values)
+        public static implicit operator MonitoredItemCollection(MonitoredItemBase[] values)
         {
             if (values != null)
             {
-                var col = new MonitoredItemBaseCollection();
+                var col = new MonitoredItemCollection();
                 foreach (var value in values)
                 {
                     col.Add(value);
@@ -80,10 +80,10 @@ namespace Workstation.ServiceModel.Ua
                 return col;
             }
 
-            return new MonitoredItemBaseCollection();
+            return new MonitoredItemCollection();
         }
 
-        public static explicit operator MonitoredItemBase[](MonitoredItemBaseCollection values)
+        public static explicit operator MonitoredItemBase[](MonitoredItemCollection values)
         {
             if (values != null)
             {
@@ -96,7 +96,7 @@ namespace Workstation.ServiceModel.Ua
         }
 
         /// <summary>Gets the value associated with the specified name.</summary>
-        /// <returns>true if the <see cref="MonitoredItemBaseCollection" /> contains an element with the specified name; otherwise, false.</returns>
+        /// <returns>true if the <see cref="MonitoredItemCollection" /> contains an element with the specified name; otherwise, false.</returns>
         /// <param name="name">The name of the value to get.</param>
         /// <param name="value">When this method returns, contains the value associated with the specified key, if the key is found; otherwise, the default value for the type of the <paramref name="value" /> parameter. This parameter is passed uninitialized.</param>
         public bool TryGetValueByName(string name, out MonitoredItemBase value)
@@ -105,7 +105,7 @@ namespace Workstation.ServiceModel.Ua
         }
 
         /// <summary>Gets the value associated with the specified clientId.</summary>
-        /// <returns>true if the <see cref="MonitoredItemBaseCollection" /> contains an element with the specified clientId; otherwise, false.</returns>
+        /// <returns>true if the <see cref="MonitoredItemCollection" /> contains an element with the specified clientId; otherwise, false.</returns>
         /// <param name="clientId">The clientId of the value to get.</param>
         /// <param name="value">When this method returns, contains the value associated with the specified key, if the key is found; otherwise, the default value for the type of the <paramref name="value" /> parameter. This parameter is passed uninitialized.</param>
         public bool TryGetValueByClientId(uint clientId, out MonitoredItemBase value)

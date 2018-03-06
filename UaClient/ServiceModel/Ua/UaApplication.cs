@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Workstation.ServiceModel.Ua.Channels;
+using System.Collections.ObjectModel;
 
 namespace Workstation.ServiceModel.Ua
 {
@@ -22,6 +23,7 @@ namespace Workstation.ServiceModel.Ua
 
         private readonly ILogger logger;
         private readonly ConcurrentDictionary<string, Lazy<Task<UaTcpSessionChannel>>> channelMap;
+        private readonly ObservableCollection<Subscription> subscriptions = new ObservableCollection<Subscription>();
         private readonly TaskCompletionSource<bool> completionTask = new TaskCompletionSource<bool>();
         private volatile TaskCompletionSource<bool> suspensionTask = new TaskCompletionSource<bool>();
         private bool disposed;
@@ -136,6 +138,10 @@ namespace Workstation.ServiceModel.Ua
             {
                 this.disposed = true;
                 this.completionTask.TrySetResult(true);
+                if (this.suspensionTask.Task.IsCompleted)
+                {
+                    this.suspensionTask = new TaskCompletionSource<bool>();
+                }
 
                 lock (globalLock)
                 {
@@ -202,6 +208,18 @@ namespace Workstation.ServiceModel.Ua
         private Task CheckSuspension(CancellationToken token = default(CancellationToken))
         {
             return this.suspensionTask.Task.WithCancellation(token);
+        }
+
+        /// <summary>
+        /// Creates a subscription to receive data changes and events from an OPC UA server.
+        /// </summary>
+        /// <param name="target">The target object.</param>
+        /// <returns>A token that cancels the subcription when disposed.</returns>
+        public IDisposable Subscribe(object target)
+        {
+            var subscription = new Subscription(this, target);
+            this.subscriptions.Add(subscription);
+            return new SubscriptionToken(subscription, this.subscriptions);
         }
 
         /// <summary>
@@ -287,6 +305,24 @@ namespace Workstation.ServiceModel.Ua
                 Lazy<Task<UaTcpSessionChannel>> value;
                 this.channelMap.TryRemove(endpointUrl, out value);
                 throw;
+            }
+        }
+
+        private struct SubscriptionToken : IDisposable
+        {
+            private readonly Subscription subscription;
+            private readonly ObservableCollection<Subscription> subscriptions;
+
+            public SubscriptionToken(Subscription subscription, ObservableCollection<Subscription> subscriptions)
+            {
+                this.subscription = subscription;
+                this.subscriptions = subscriptions;
+            }
+
+            public void Dispose()
+            {
+                this.subscriptions.Remove(this.subscription);
+                this.subscription.Dispose();
             }
         }
     }

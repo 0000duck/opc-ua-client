@@ -854,8 +854,13 @@ namespace Workstation.ServiceModel.Ua.Channels
 
             if (value.BodyType == BodyType.Encodable)
             {
-                this.WriteNodeId(null, ExpandedNodeId.ToNodeId(value.TypeId, this.channel?.NamespaceUris));
-                this.WriteByte(null, 0x01); // BodyType Encodable is encoded as ByteString.
+                if (!this.channel.TryGetEncodingFromType(value.Body.GetType(), out NodeId nodeId))
+                {
+                    throw new ServiceResultException(StatusCodes.BadEncodingError);
+                }
+
+                this.WriteNodeId(null, nodeId);
+                this.WriteByte(null, 0x01);
                 var pos0 = this.writer.BaseStream.Position;
                 this.WriteInt32(null, -1);
                 var pos1 = this.writer.BaseStream.Position;
@@ -879,7 +884,7 @@ namespace Workstation.ServiceModel.Ua.Channels
             }
 
             var type = value.GetType();
-            if (!this.channel.TryGetBinaryEncodingIdFromType(type, out NodeId binaryEncodingId))
+            if (!this.channel.TryGetEncodingFromType(type, out NodeId binaryEncodingId))
             {
                 throw new ServiceResultException(StatusCodes.BadEncodingError);
             }

@@ -52,6 +52,7 @@ try
 namespace Workstation.ServiceModel.Ua
 {
 	using System;
+    using System.Collections.Generic;
 	using System.Xml.Linq;
 
 <#	var enums = ns.Types.OfType<CodeTypeDeclaration>().Where(tt=>tt.IsEnum).ToList();
@@ -63,13 +64,12 @@ namespace Workstation.ServiceModel.Ua
 <#		} #>
 	}
 <#	} #>
-
 <#	var classes = ns.Types.OfType<CodeTypeDeclaration>().Where(tt=>tt.IsClass
 		&& tt.Name != "DataValue" && tt.Name != "DiagnosticInfo" && tt.Name != "ExpandedNodeId"
 		&& tt.Name != "ExtensionObject" && tt.Name != "Guid" && tt.Name != "LocalizedText"
 		&& tt.Name != "NodeId" && tt.Name != "QualifiedName" && tt.Name != "StatusCode"
-		&& tt.Name != "Variant" && tt.Name != "XElement" && !tt.Name.StartsWith("ListOf")).ToList();
-	foreach (var c in classes) { 
+		&& tt.Name != "Variant" && tt.Name != "XElement" && !tt.Name.StartsWith("ListOf")).ToList(); #>
+<#	foreach (var c in classes) { 
 		var props = c.Members.OfType<CodeMemberProperty>().Where(pp=>!pp.Name.EndsWith("Specified")).ToList(); #>
 	[BinaryEncodingId(ObjectIds.<#= c.Name #>_Encoding_DefaultBinary)]
 	[XmlEncodingId(ObjectIds.<#= c.Name #>_Encoding_DefaultXml)]

@@ -24,7 +24,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <None Remove="ServiceModel\Ua\Schema\AttributeIds.csv" />
+    <None Remove="ServiceModel\Ua\Schema\NodeIds.csv" />
     <None Remove="ServiceModel\Ua\Schema\NodeIdsEdited.csv" />
+    <None Remove="ServiceModel\Ua\Schema\StatusCodes.csv" />
+    <None Remove="ServiceModel\Ua\Schema\Types.xsd" />
   </ItemGroup>
 
   <ItemGroup>
@@ -50,6 +54,21 @@
 
   <ItemGroup>
     <AdditionalFiles Include="stylecop.json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="ServiceModel\Ua\Schema\AttributeIds.csv">
+      <Generator>TextTemplatingFileGenerator</Generator>
+    </Content>
+    <Content Include="ServiceModel\Ua\Schema\NodeIds.csv">
+      <Generator>TextTemplatingFileGenerator</Generator>
+    </Content>
+    <Content Include="ServiceModel\Ua\Schema\StatusCodes.csv">
+      <Generator>TextTemplatingFileGenerator</Generator>
+    </Content>
+    <Content Include="ServiceModel\Ua\Schema\Types.xsd">
+      <Generator>TextTemplatingFileGenerator</Generator>
+    </Content>
   </ItemGroup>
 
   <ItemGroup>

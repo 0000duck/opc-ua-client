@@ -2,7 +2,7 @@
 <!--10/31/2015 edited to transform most properties of type ExtensionObject to the proper base class -->
 <!--03/15/2016 edited to remove classes for testing -->
 <!--04/27/2017 change HistoryData from type="tns:HistoryData" back to type="ua:ExtensionObject" -->
-<!--08/26/2017 changed HistoryData from type="ua:ExtensionObject" to type="tns:HistoryBase -->
+<!--10/08/2017 changed HistoryData from type="ua:ExtensionObject" to type="tns:HistoryResult -->
 
 <xs:schema
   xmlns:xs="http://www.w3.org/2001/XMLSchema"
@@ -2564,18 +2564,18 @@
   <xs:element name="ListOfHistoryReadValueId" type="tns:ListOfHistoryReadValueId" nillable="true"></xs:element>
 
   <!--08/26/2017 added base class for HistoryData and HistoryEvent-->
-  <xs:complexType name="HistoryBase">
+  <xs:complexType name="HistoryResult">
     <xs:sequence>
     </xs:sequence>
   </xs:complexType>
-  <xs:element name="HistoryBase" type="tns:HistoryBase" />
+  <xs:element name="HistoryResult" type="tns:HistoryResult" />
 
   <xs:complexType name="HistoryReadResult">
     <xs:sequence>
       <xs:element name="StatusCode" type="ua:StatusCode" minOccurs="0" />
       <xs:element name="ContinuationPoint" type="xs:base64Binary" minOccurs="0" nillable="true" />
-      <!-- 08/26/2017 changed HistoryData from type="ua:ExtensionObject" to type="tns:HistoryBase" -->
-      <xs:element name="HistoryData" type="tns:HistoryBase" minOccurs="0" nillable="true" />
+      <!-- 08/26/2017 changed HistoryData from type="ua:ExtensionObject" to type="tns:HistoryResult" -->
+      <xs:element name="HistoryData" type="tns:HistoryResult" minOccurs="0" nillable="true" />
     </xs:sequence>
   </xs:complexType>
   <xs:element name="HistoryReadResult" type="tns:HistoryReadResult" />
@@ -2649,10 +2649,10 @@
   </xs:complexType>
   <xs:element name="ReadAtTimeDetails" type="tns:ReadAtTimeDetails" />
 
-  <!--08/26/2017 changed to extend HistoryBase -->
+  <!--08/26/2017 changed to extend HistoryResult -->
   <xs:complexType name="HistoryData">
     <xs:complexContent mixed="false">
-      <xs:extension base="tns:HistoryBase">
+      <xs:extension base="tns:HistoryResult">
         <xs:sequence>
           <xs:element name="DataValues" type="ua:ListOfDataValue" minOccurs="0" nillable="true" />
         </xs:sequence>
@@ -2688,10 +2688,10 @@
   </xs:complexType>
   <xs:element name="HistoryModifiedData" type="tns:HistoryModifiedData" />
 
-  <!--08/26/2017 changed to extend HistoryBase -->
+  <!--08/26/2017 changed to extend HistoryResult -->
   <xs:complexType name="HistoryEvent">
     <xs:complexContent mixed="false">
-      <xs:extension base="tns:HistoryBase">
+      <xs:extension base="tns:HistoryResult">
         <xs:sequence>
           <xs:element name="Events" type="tns:ListOfHistoryEventFieldList" minOccurs="0" nillable="true" />
         </xs:sequence>

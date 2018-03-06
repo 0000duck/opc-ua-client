@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Threading;
@@ -10,7 +11,6 @@ using System.Threading.Tasks.Dataflow;
 using Microsoft.Extensions.Logging;
 using Org.BouncyCastle.Crypto;
 using Org.BouncyCastle.Security;
-using System.Collections.Generic;
 
 namespace Workstation.ServiceModel.Ua.Channels
 {
@@ -477,8 +477,6 @@ namespace Workstation.ServiceModel.Ua.Channels
             // if UserIdentity type is X509Identity
             else if (this.UserIdentity is X509Identity)
             {
-                throw new NotImplementedException("A user identity of X509Identity is not implemented.");
-                /*
                 var tokenPolicy = this.RemoteEndpoint.UserIdentityTokens.FirstOrDefault(t => t.TokenType == UserTokenType.Certificate);
                 if (tokenPolicy == null)
                 {
@@ -486,41 +484,33 @@ namespace Workstation.ServiceModel.Ua.Channels
                 }
 
                 var x509Identity = (X509Identity)this.UserIdentity;
-                identityToken = new X509IdentityToken { CertificateData = x509Identity.Certificate?.RawData, PolicyId = tokenPolicy.PolicyId };
+                identityToken = new X509IdentityToken { CertificateData = x509Identity.Certificate, PolicyId = tokenPolicy.PolicyId };
                 var secPolicyUri = tokenPolicy.SecurityPolicyUri ?? this.RemoteEndpoint.SecurityPolicyUri;
                 switch (secPolicyUri)
                 {
                     case SecurityPolicyUris.Basic128Rsa15:
                     case SecurityPolicyUris.Basic256:
-                        var asymSigningKey = x509Identity.Certificate?.GetRSAPrivateKey();
-                        if (asymSigningKey != null)
+                        signer = SignerUtilities.GetSigner("SHA-1withRSA");
+                        signer.Init(true, x509Identity.Key);
+                        signer.BlockUpdate(this.RemoteEndpoint.ServerCertificate, 0, this.RemoteEndpoint.ServerCertificate.Length);
+                        signer.BlockUpdate(this.RemoteNonce, 0, this.RemoteNonce.Length);
+                        tokenSignature = new SignatureData
                         {
-                            dataToSign = Concat(this.RemoteEndpoint.ServerCertificate, this.RemoteNonce);
-                            tokenSignature = new SignatureData
-                            {
-                                Signature = asymSigningKey.SignData(dataToSign, HashAlgorithmName.SHA1, RSASignaturePadding.Pkcs1),
-                                Algorithm = RsaSha1Signature,
-                            };
-                            break;
-                        }
-
-                        tokenSignature = new SignatureData();
+                            Signature = signer.GenerateSignature(),
+                            Algorithm = RsaSha1Signature,
+                        };
                         break;
 
                     case SecurityPolicyUris.Basic256Sha256:
-                        var asymSigningKey256 = x509Identity.Certificate?.GetRSAPrivateKey();
-                        if (asymSigningKey256 != null)
+                        signer = SignerUtilities.GetSigner("SHA-256withRSA");
+                        signer.Init(true, x509Identity.Key);
+                        signer.BlockUpdate(this.RemoteEndpoint.ServerCertificate, 0, this.RemoteEndpoint.ServerCertificate.Length);
+                        signer.BlockUpdate(this.RemoteNonce, 0, this.RemoteNonce.Length);
+                        tokenSignature = new SignatureData
                         {
-                            dataToSign = Concat(this.RemoteEndpoint.ServerCertificate, this.RemoteNonce);
-                            tokenSignature = new SignatureData
-                            {
-                                Signature = asymSigningKey256.SignData(dataToSign, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1),
-                                Algorithm = RsaSha256Signature,
-                            };
-                            break;
-                        }
-
-                        tokenSignature = new SignatureData();
+                            Signature = signer.GenerateSignature(),
+                            Algorithm = RsaSha1Signature,
+                        };
                         break;
 
                     default:
@@ -528,8 +518,7 @@ namespace Workstation.ServiceModel.Ua.Channels
                         break;
                 }
 
-                dataToSign = null;
-                */
+                signer = null;
             }
 
             // if UserIdentity type is UserNameIdentity
@@ -690,7 +679,7 @@ namespace Workstation.ServiceModel.Ua.Channels
         protected override async Task OnCloseAsync(CancellationToken token = default(CancellationToken))
         {
             await this.CloseSessionAsync(new CloseSessionRequest { DeleteSubscriptions = true }).ConfigureAwait(false);
-            await Task.Delay(1000).ConfigureAwait(false);
+            await Task.Delay(1000).ConfigureAwait(false); // allow receive publish cancellations.
             await base.OnCloseAsync(token).ConfigureAwait(false);
         }
 

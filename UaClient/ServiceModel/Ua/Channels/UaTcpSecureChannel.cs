@@ -53,8 +53,8 @@ namespace Workstation.ServiceModel.Ua.Channels
         private const int SequenceHeaderSize = 8;
         private const int TokenRequestedLifetime = 60 * 60 * 1000; // 60 minutes
 
-        private static readonly Dictionary<NodeId, Type> BinaryEncodingIdToTypeDictionary = new Dictionary<NodeId, Type>();
-        private static readonly Dictionary<Type, NodeId> TypeToBinaryEncodingIdDictionary = new Dictionary<Type, NodeId>();
+        private static readonly Dictionary<NodeId, Type> DefaultDecodingDictionary = new Dictionary<NodeId, Type>();
+        private static readonly Dictionary<Type, NodeId> DefaultEncodingDictionary = new Dictionary<Type, NodeId>();
         private static readonly NodeId OpenSecureChannelRequestNodeId = NodeId.Parse(ObjectIds.OpenSecureChannelRequest_Encoding_DefaultBinary);
         private static readonly NodeId CloseSecureChannelRequestNodeId = NodeId.Parse(ObjectIds.CloseSecureChannelRequest_Encoding_DefaultBinary);
         private static readonly NodeId ReadResponseNodeId = NodeId.Parse(ObjectIds.ReadResponse_Encoding_DefaultBinary);
@@ -69,8 +69,8 @@ namespace Workstation.ServiceModel.Ua.Channels
         private readonly ActionBlock<ServiceOperation> pendingRequests;
         private readonly ConcurrentDictionary<uint, ServiceOperation> pendingCompletions;
         private readonly X509CertificateParser certificateParser = new X509CertificateParser();
-        private readonly Dictionary<NodeId, Type> encodingIdToTypeDictionary;
-        private readonly Dictionary<Type, NodeId> typeToBinaryEncodingIdDictionary;
+        private readonly ConcurrentDictionary<NodeId, Type> decodingDictionary = new ConcurrentDictionary<NodeId, Type>();
+        private readonly ConcurrentDictionary<Type, NodeId> encodingDictionary = new ConcurrentDictionary<Type, NodeId>();
 
         private int handle;
         private int sequenceNumber;
@@ -124,17 +124,12 @@ namespace Workstation.ServiceModel.Ua.Channels
                     var attr = info.GetCustomAttribute<BinaryEncodingIdAttribute>(false);
                     if (attr != null)
                     {
-                        var id = ExpandedNodeId.ToNodeId(attr.NodeId, null);
-                        BinaryEncodingIdToTypeDictionary[id] = type;
-                        TypeToBinaryEncodingIdDictionary[type] = id;
+                        var id = attr.NodeId.ToNodeId(null);
+                        DefaultDecodingDictionary[id] = type;
+                        DefaultEncodingDictionary[type] = id;
                     }
                 }
             }
-
-            //TypeToBinaryEncodingIdDictionary = new Dictionary<Type, NodeId>()
-            //{
-            //    { typeof(Argument), NodeId.Parse(ObjectIds.Argument_Encoding_DefaultBinary) },
-            //};
         }
 
         /// <summary>
@@ -167,11 +162,8 @@ namespace Workstation.ServiceModel.Ua.Channels
             this.NamespaceUris = new List<string> { "http://opcfoundation.org/UA/" };
             this.ServerUris = new List<string>();
             this.channelCts = new CancellationTokenSource();
-            this.pendingRequests = new ActionBlock<ServiceOperation>(t => this.SendRequestActionAsync(t), new ExecutionDataflowBlockOptions { CancellationToken = this.channelCts.Token });
+            this.pendingRequests = new ActionBlock<ServiceOperation>(so => this.SendRequestActionAsync(so)/*, new ExecutionDataflowBlockOptions { CancellationToken = this.channelCts.Token }*/);
             this.pendingCompletions = new ConcurrentDictionary<uint, ServiceOperation>();
-
-            this.encodingIdToTypeDictionary = new Dictionary<NodeId, Type>(BinaryEncodingIdToTypeDictionary);
-            this.typeToBinaryEncodingIdDictionary = new Dictionary<Type, NodeId>(TypeToBinaryEncodingIdDictionary);
         }
 
         /// <summary>
@@ -250,26 +242,27 @@ namespace Workstation.ServiceModel.Ua.Channels
         public List<string> ServerUris { get; protected set; }
 
         /// <summary>
-        /// Gets the system type associated with the encodingId.
+        /// Gets the system type associated with the encoding.
         /// </summary>
-        /// <param name="encodingId">The encodingId.</param>
+        /// <param name="encodingId">The encoding id.</param>
         /// <param name="type">The system type.</param>
-        /// <returns>True if successfull.</returns>
-        public bool TryGetTypeFromEncodingId(NodeId encodingId, out Type type)
+        /// <returns>True if successful.</returns>
+        public bool TryGetTypeFromEncoding(NodeId encodingId, out Type type)
         {
-            return this.encodingIdToTypeDictionary.TryGetValue(encodingId, out type);
+            return DefaultDecodingDictionary.TryGetValue(encodingId, out type)
+                || this.decodingDictionary.TryGetValue(encodingId, out type);
         }
 
-
         /// <summary>
-        /// Gets the BinaryEncodingId associated with the system type.
+        /// Gets the encoding associated with the system type.
         /// </summary>
         /// <param name="type">The system type.</param>
-        /// <param name="binaryEncodingId">The BinaryEncodingId.</param>
-        /// <returns>True if successfull.</returns>
-        public bool TryGetBinaryEncodingIdFromType(Type type, out NodeId binaryEncodingId)
+        /// <param name="encodingId">The encoding id.</param>
+        /// <returns>True if successful.</returns>
+        public bool TryGetEncodingFromType(Type type, out NodeId encodingId)
         {
-            return this.typeToBinaryEncodingIdDictionary.TryGetValue(type, out binaryEncodingId);
+            return DefaultEncodingDictionary.TryGetValue(type, out encodingId)
+                || this.encodingDictionary.TryGetValue(type, out encodingId);
         }
 
         /// <summary>
@@ -282,9 +275,9 @@ namespace Workstation.ServiceModel.Ua.Channels
             this.ThrowIfClosedOrNotOpening();
             this.TimestampHeader(request);
             var operation = new ServiceOperation(request);
+            using (var registration1 = this.channelCts.Token.Register(o => ((ServiceOperation)o).TrySetException(new ServiceResultException(StatusCodes.BadSecureChannelClosed)), operation, false))
             using (var timeoutCts = new CancellationTokenSource((int)request.RequestHeader.TimeoutHint))
-            using (var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(timeoutCts.Token, this.channelCts.Token))
-            using (var registration = linkedCts.Token.Register(o => ((ServiceOperation)o).TrySetException(new ServiceResultException(StatusCodes.BadRequestTimeout)), operation, false))
+            using (var registration2 = timeoutCts.Token.Register(o => ((ServiceOperation)o).TrySetException(new ServiceResultException(StatusCodes.BadRequestTimeout)), operation, false))
             {
                 if (this.pendingRequests.Post(operation))
                 {
@@ -606,9 +599,9 @@ namespace Workstation.ServiceModel.Ua.Channels
                         var attr = info.GetCustomAttribute<BinaryEncodingIdAttribute>(false);
                         if (attr != null)
                         {
-                            var id = ExpandedNodeId.ToNodeId(attr.NodeId, this.NamespaceUris);
-                            this.encodingIdToTypeDictionary[id] = type;
-                            this.typeToBinaryEncodingIdDictionary[type] = id;
+                            var id = attr.NodeId.ToNodeId(this.NamespaceUris);
+                            this.decodingDictionary[id] = type;
+                            this.encodingDictionary[type] = id;
                         }
                     }
                 }
@@ -618,16 +611,10 @@ namespace Workstation.ServiceModel.Ua.Channels
         /// <inheritdoc/>
         protected override async Task OnCloseAsync(CancellationToken token = default(CancellationToken))
         {
-            try
-            {
-                var request = new CloseSecureChannelRequest { RequestHeader = new RequestHeader { TimeoutHint = 2000, ReturnDiagnostics = this.DiagnosticsHint } };
-                await this.RequestAsync(request).ConfigureAwait(false);
-            }
-            catch (Exception ex)
-            {
-                this.logger?.LogError($"Error closing secure channel. {ex.Message}");
-            }
+            var request = new CloseSecureChannelRequest();
+            await this.RequestAsync(request).ConfigureAwait(false);
 
+            this.channelCts.Cancel();
             await base.OnCloseAsync(token).ConfigureAwait(false);
         }
 
@@ -750,17 +737,19 @@ namespace Workstation.ServiceModel.Ua.Channels
                 request.RequestHeader.AuthenticationToken = this.AuthenticationToken;
 
                 this.logger?.LogTrace($"Sending {request.GetType().Name}, Handle: {request.RequestHeader.RequestHandle}");
-                this.pendingCompletions.TryAdd(request.RequestHeader.RequestHandle, operation);
                 if (request is OpenSecureChannelRequest)
                 {
+                    this.pendingCompletions.TryAdd(request.RequestHeader.RequestHandle, operation);
                     await this.SendOpenSecureChannelRequestAsync((OpenSecureChannelRequest)request, token).ConfigureAwait(false);
                 }
                 else if (request is CloseSecureChannelRequest)
                 {
                     await this.SendCloseSecureChannelRequestAsync((CloseSecureChannelRequest)request, token).ConfigureAwait(false);
+                    operation.TrySetResult(new CloseSecureChannelResponse { ResponseHeader = new ResponseHeader { RequestHandle = request.RequestHeader.RequestHandle, Timestamp = DateTime.UtcNow } });
                 }
                 else
                 {
+                    this.pendingCompletions.TryAdd(request.RequestHeader.RequestHandle, operation);
                     await this.SendServiceRequestAsync(request, token).ConfigureAwait(false);
                 }
             }
@@ -1132,12 +1121,12 @@ namespace Workstation.ServiceModel.Ua.Channels
             var bodyEncoder = new BinaryEncoder(bodyStream, this);
             try
             {
-                if (!this.TryGetBinaryEncodingIdFromType(request.GetType(), out NodeId binaryEncodingId))
+                if (!this.TryGetEncodingFromType(request.GetType(), out NodeId encodingId))
                 {
                     throw new ServiceResultException(StatusCodes.BadEncodingError);
                 }
 
-                bodyEncoder.WriteNodeId(null, binaryEncodingId);
+                bodyEncoder.WriteNodeId(null, encodingId);
                 request.Encode(bodyEncoder);
                 bodyStream.Position = 0;
                 if (this.RemoteMaxMessageSize > 0 && bodyStream.Length > this.RemoteMaxMessageSize)
@@ -1308,7 +1297,6 @@ namespace Workstation.ServiceModel.Ua.Channels
                     if (response == null)
                     {
                         // Null response indicates socket closed. This is expected when closing secure channel.
-                        this.channelCts.Cancel();
                         if (this.State == CommunicationState.Closed || this.State == CommunicationState.Closing)
                         {
                             return;
@@ -1620,7 +1608,7 @@ namespace Workstation.ServiceModel.Ua.Channels
                     else
                     {
                         // find node in dictionary
-                        if (!this.TryGetTypeFromEncodingId(nodeId, out Type type2))
+                        if (!this.TryGetTypeFromEncoding(nodeId, out Type type2))
                         {
                             throw new ServiceResultException(StatusCodes.BadEncodingError, "NodeId not registered in dictionary.");
                         }

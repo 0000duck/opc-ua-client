@@ -2,6 +2,7 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -164,6 +165,28 @@ namespace Workstation.ServiceModel.Ua
             });
 
             return response.Results[0].StatusCode;
+        }
+
+        /// <summary>
+        /// Converts a NodeId to an ExpandedNodeId.
+        /// </summary>
+        /// <param name="nodeId">A NodeId.</param>
+        /// <param name="namespaceUris">The server's namespace table.</param>
+        /// <returns>The <see cref="T:ConverterSystems.ServiceModel.Ua.ExpandedNodeId"/>.</returns>
+        public static ExpandedNodeId ToExpandedNodeId(this NodeId nodeId, IList<string> namespaceUris)
+        {
+            return NodeId.ToExpandedNodeId(nodeId, namespaceUris);
+        }
+
+        /// <summary>
+        /// Converts a ExpandedNodeId to an NodeId.
+        /// </summary>
+        /// <param name="nodeId">An ExpandedNodeId.</param>
+        /// <param name="namespaceUris">The server's namespace table.</param>
+        /// <returns>The <see cref="T:ConverterSystems.ServiceModel.Ua.NodeId"/>.</returns>
+        public static NodeId ToNodeId(this ExpandedNodeId nodeId, IList<string> namespaceUris)
+        {
+            return ExpandedNodeId.ToNodeId(nodeId, namespaceUris);
         }
     }
 }

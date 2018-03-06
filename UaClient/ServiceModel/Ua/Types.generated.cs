@@ -10,6 +10,7 @@
 namespace Workstation.ServiceModel.Ua
 {
 	using System;
+    using System.Collections.Generic;
 	using System.Xml.Linq;
 
 	[DataTypeId(DataTypeIds.OpenFileMode)]
@@ -256,7 +257,6 @@ namespace Workstation.ServiceModel.Ua
 		PercentOfEURange=3,
 		Unknown=4,
 	}
-
 	[BinaryEncodingId(ObjectIds.TrustListDataType_Encoding_DefaultBinary)]
 	[XmlEncodingId(ObjectIds.TrustListDataType_Encoding_DefaultXml)]
 	[DataTypeId(DataTypeIds.TrustListDataType)]
@@ -3073,10 +3073,10 @@ namespace Workstation.ServiceModel.Ua
             decoder.PopNamespace();
         }
 	}
-	[BinaryEncodingId(ObjectIds.HistoryBase_Encoding_DefaultBinary)]
-	[XmlEncodingId(ObjectIds.HistoryBase_Encoding_DefaultXml)]
-	[DataTypeId(DataTypeIds.HistoryBase)]
-	public class HistoryBase : IEncodable {
+	[BinaryEncodingId(ObjectIds.HistoryResult_Encoding_DefaultBinary)]
+	[XmlEncodingId(ObjectIds.HistoryResult_Encoding_DefaultXml)]
+	[DataTypeId(DataTypeIds.HistoryResult)]
+	public class HistoryResult : IEncodable {
         public virtual void Encode(IEncoder encoder) {
             encoder.PushNamespace("http://opcfoundation.org/UA/2008/02/Types.xsd");
             encoder.PopNamespace();
@@ -3089,7 +3089,7 @@ namespace Workstation.ServiceModel.Ua
 	[BinaryEncodingId(ObjectIds.HistoryEvent_Encoding_DefaultBinary)]
 	[XmlEncodingId(ObjectIds.HistoryEvent_Encoding_DefaultXml)]
 	[DataTypeId(DataTypeIds.HistoryEvent)]
-	public class HistoryEvent : HistoryBase {
+	public class HistoryEvent : HistoryResult {
 		public HistoryEventFieldList[] Events { get; set; }
         public override void Encode(IEncoder encoder) {
 			base.Encode(encoder);
@@ -3123,7 +3123,7 @@ namespace Workstation.ServiceModel.Ua
 	[BinaryEncodingId(ObjectIds.HistoryData_Encoding_DefaultBinary)]
 	[XmlEncodingId(ObjectIds.HistoryData_Encoding_DefaultXml)]
 	[DataTypeId(DataTypeIds.HistoryData)]
-	public class HistoryData : HistoryBase {
+	public class HistoryData : HistoryResult {
 		public DataValue[] DataValues { get; set; }
         public override void Encode(IEncoder encoder) {
 			base.Encode(encoder);
@@ -3184,19 +3184,19 @@ namespace Workstation.ServiceModel.Ua
 	public class HistoryReadResult : IEncodable {
 		public StatusCode StatusCode { get; set; }
 		public Byte[] ContinuationPoint { get; set; }
-		public HistoryBase HistoryData { get; set; }
+		public HistoryResult HistoryData { get; set; }
         public virtual void Encode(IEncoder encoder) {
             encoder.PushNamespace("http://opcfoundation.org/UA/2008/02/Types.xsd");
 			encoder.WriteStatusCode("StatusCode", StatusCode);
 			encoder.WriteByteString("ContinuationPoint", ContinuationPoint);
-			encoder.WriteExtensionObject<HistoryBase>("HistoryData", HistoryData);
+			encoder.WriteEncodable<HistoryResult>("HistoryData", HistoryData);
             encoder.PopNamespace();
         }
         public virtual void Decode(IDecoder decoder) {
             decoder.PushNamespace("http://opcfoundation.org/UA/2008/02/Types.xsd");
 			StatusCode = decoder.ReadStatusCode("StatusCode");
 			ContinuationPoint = decoder.ReadByteString("ContinuationPoint");
-			HistoryData = decoder.ReadExtensionObject<HistoryBase>("HistoryData");
+			HistoryData = decoder.ReadEncodable<HistoryResult>("HistoryData");
             decoder.PopNamespace();
         }
 	}

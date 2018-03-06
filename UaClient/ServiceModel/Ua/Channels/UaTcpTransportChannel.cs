@@ -265,6 +265,7 @@ namespace Workstation.ServiceModel.Ua.Channels
         /// <inheritdoc/>
         protected override Task OnCloseAsync(CancellationToken token)
         {
+            this.logger?.LogTrace("Closing socket.");
 #if NET45
             this.tcpClient?.Close();
 #else
@@ -276,6 +277,7 @@ namespace Workstation.ServiceModel.Ua.Channels
         /// <inheritdoc/>
         protected override Task OnAbortAsync(CancellationToken token)
         {
+            this.logger?.LogTrace("Closing socket.");
 #if NET45
             this.tcpClient?.Close();
 #else

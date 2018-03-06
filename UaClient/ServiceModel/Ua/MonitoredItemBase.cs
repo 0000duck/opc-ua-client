@@ -2,7 +2,6 @@
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
 using System;
-using System.IO;
 using System.Reflection;
 using System.Threading;
 using Workstation.Collections;
@@ -19,7 +18,7 @@ namespace Workstation.ServiceModel.Ua
         /// <summary>
         /// Initializes a new instance of the <see cref="MonitoredItemBase"/> class.
         /// </summary>
-        /// <param name="name">the key.</param>
+        /// <param name="property">the property of the target to store the published value.</param>
         /// <param name="nodeId">the ExpandedNodeId to monitor.</param>
         /// <param name="attributeId">the attribute to monitor.</param>
         /// <param name="indexRange">the range of array indexes to monitor.</param>
@@ -28,11 +27,11 @@ namespace Workstation.ServiceModel.Ua
         /// <param name="filter">the properties that trigger a notification.</param>
         /// <param name="queueSize">the length of the queue used by the server to buffer values.</param>
         /// <param name="discardOldest">a value indicating whether to discard the oldest entries in the queue when it is full.</param>
-        public MonitoredItemBase(string name, ExpandedNodeId nodeId, uint attributeId = AttributeIds.Value, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
+        public MonitoredItemBase(PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = AttributeIds.Value, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
         {
-            if (string.IsNullOrEmpty(name))
+            if (property == null)
             {
-                throw new ArgumentNullException(nameof(name));
+                throw new ArgumentNullException(nameof(property));
             }
 
             if (nodeId == null)
@@ -40,7 +39,7 @@ namespace Workstation.ServiceModel.Ua
                 throw new ArgumentNullException(nameof(nodeId));
             }
 
-            this.Name = name;
+            this.Property = property;
             this.NodeId = nodeId;
             this.AttributeId = attributeId;
             this.IndexRange = indexRange;
@@ -53,9 +52,14 @@ namespace Workstation.ServiceModel.Ua
         }
 
         /// <summary>
-        /// Gets the key.
+        /// Gets the name of the property of the target.
         /// </summary>
-        public string Name { get; }
+        public string Name => this.Property.Name;
+
+        /// <summary>
+        /// Gets the property of the target to store the published value.
+        /// </summary>
+        public PropertyInfo Property { get; }
 
         /// <summary>
         /// Gets the ExpandedNodeId to monitor.
@@ -107,15 +111,15 @@ namespace Workstation.ServiceModel.Ua
         /// </summary>
         public uint ServerId { get; protected set; }
 
-        public abstract void Publish(DataValue dataValue);
+        public abstract void Publish(object target, DataValue dataValue);
 
-        public abstract void Publish(Variant[] eventFields);
+        public abstract void Publish(object target, Variant[] eventFields);
 
-        public abstract bool TryGetValue(out DataValue value);
+        public abstract bool TryGetValue(object target, out DataValue value);
 
-        public abstract void OnCreateResult(MonitoredItemCreateResult result);
+        public abstract void OnCreateResult(object target, MonitoredItemCreateResult result);
 
-        public abstract void OnWriteResult(StatusCode statusCode);
+        public abstract void OnWriteResult(object target, StatusCode statusCode);
     }
 
     /// <summary>
@@ -124,77 +128,55 @@ namespace Workstation.ServiceModel.Ua
     /// </summary>
     public class DataValueMonitoredItem : MonitoredItemBase
     {
-        private StatusCode statusCode;
+        private StatusCode lastStatusCode;
 
-        public DataValueMonitoredItem(object target, PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = 13, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
-            : base(property.Name, nodeId, attributeId, indexRange, monitoringMode, samplingInterval, filter, queueSize, discardOldest)
-        {
-            if (target == null)
-            {
-                throw new ArgumentNullException(nameof(target));
-            }
-
-            if (property == null)
-            {
-                throw new ArgumentNullException(nameof(property));
-            }
-
-            this.Target = target;
-            this.Property = property;
-        }
-
-        /// <summary>
-        /// Gets the target object.
-        /// </summary>
-        public object Target { get; }
-
-        /// <summary>
-        /// Gets the property of the target to store the published value.
-        /// </summary>
-        public PropertyInfo Property { get; }
-
-        public override void Publish(DataValue dataValue)
-        {
-            this.Property.SetValue(this.Target, dataValue);
-            this.SetDataErrorInfo(dataValue.StatusCode);
-        }
-
-        public override void Publish(Variant[] eventFields)
+        public DataValueMonitoredItem(PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = 13, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
+            : base(property, nodeId, attributeId, indexRange, monitoringMode, samplingInterval, filter, queueSize, discardOldest)
         {
         }
 
-        public override bool TryGetValue(out DataValue value)
+        public override void Publish(object target, DataValue dataValue)
+        {
+            this.Property.SetValue(target, dataValue);
+            this.SetDataErrorInfo(target, dataValue.StatusCode);
+        }
+
+        public override void Publish(object target, Variant[] eventFields)
+        {
+        }
+
+        public override bool TryGetValue(object target, out DataValue value)
         {
             var pi = this.Property;
             if (pi.CanRead)
             {
-                value = (DataValue)pi.GetValue(this.Target);
+                value = (DataValue)pi.GetValue(target);
                 return true;
             }
             value = default(DataValue);
             return false;
         }
 
-        public override void OnCreateResult(MonitoredItemCreateResult result)
+        public override void OnCreateResult(object target, MonitoredItemCreateResult result)
         {
             this.ServerId = result.MonitoredItemId;
-            this.SetDataErrorInfo(result.StatusCode);
+            this.SetDataErrorInfo(target, result.StatusCode);
         }
 
-        public override void OnWriteResult(StatusCode statusCode)
+        public override void OnWriteResult(object target, StatusCode statusCode)
         {
-            this.SetDataErrorInfo(statusCode);
+            this.SetDataErrorInfo(target, statusCode);
         }
 
-        private void SetDataErrorInfo(StatusCode statusCode)
+        private void SetDataErrorInfo(object target, StatusCode statusCode)
         {
-            if (this.statusCode == statusCode)
+            if (this.lastStatusCode == statusCode)
             {
                 return;
             }
 
-            this.statusCode = statusCode;
-            var targetAsDataErrorInfo = this.Target as ISetDataErrorInfo;
+            this.lastStatusCode = statusCode;
+            var targetAsDataErrorInfo = target as ISetDataErrorInfo;
             if (targetAsDataErrorInfo != null)
             {
                 if (!StatusCode.IsGood(statusCode))
@@ -215,77 +197,55 @@ namespace Workstation.ServiceModel.Ua
     /// </summary>
     public class ValueMonitoredItem : MonitoredItemBase
     {
-        private StatusCode statusCode;
+        private StatusCode lastStatusCode;
 
-        public ValueMonitoredItem(object target, PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = 13, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
-            : base(property.Name, nodeId, attributeId, indexRange, monitoringMode, samplingInterval, filter, queueSize, discardOldest)
-        {
-            if (target == null)
-            {
-                throw new ArgumentNullException(nameof(target));
-            }
-
-            if (property == null)
-            {
-                throw new ArgumentNullException(nameof(property));
-            }
-
-            this.Target = target;
-            this.Property = property;
-        }
-
-        /// <summary>
-        /// Gets the target object.
-        /// </summary>
-        public object Target { get; }
-
-        /// <summary>
-        /// Gets the property of the target to store the published value.
-        /// </summary>
-        public PropertyInfo Property { get; }
-
-        public override void Publish(DataValue dataValue)
-        {
-            this.Property.SetValue(this.Target, dataValue.GetValue());
-            this.SetDataErrorInfo(dataValue.StatusCode);
-        }
-
-        public override void Publish(Variant[] eventFields)
+        public ValueMonitoredItem(PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = 13, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
+            : base(property, nodeId, attributeId, indexRange, monitoringMode, samplingInterval, filter, queueSize, discardOldest)
         {
         }
 
-        public override bool TryGetValue(out DataValue value)
+        public override void Publish(object target, DataValue dataValue)
+        {
+            this.Property.SetValue(target, dataValue.GetValue());
+            this.SetDataErrorInfo(target, dataValue.StatusCode);
+        }
+
+        public override void Publish(object target, Variant[] eventFields)
+        {
+        }
+
+        public override bool TryGetValue(object target, out DataValue value)
         {
             var pi = this.Property;
             if (pi.CanRead)
             {
-                value = new DataValue(this.Property.GetValue(this.Target));
+                value = new DataValue(this.Property.GetValue(target));
                 return true;
             }
             value = default(DataValue);
             return false;
         }
 
-        public override void OnCreateResult(MonitoredItemCreateResult result)
+        public override void OnCreateResult(object target, MonitoredItemCreateResult result)
         {
             this.ServerId = result.MonitoredItemId;
-            this.SetDataErrorInfo(result.StatusCode);
+            this.SetDataErrorInfo(target, result.StatusCode);
         }
 
-        public override void OnWriteResult(StatusCode statusCode)
+        public override void OnWriteResult(object target, StatusCode statusCode)
         {
-            this.SetDataErrorInfo(statusCode);
+            this.SetDataErrorInfo(target, statusCode);
         }
 
-        private void SetDataErrorInfo(StatusCode statusCode)
+        private void SetDataErrorInfo(object target, StatusCode statusCode)
         {
-            if (this.statusCode == statusCode)
+            if (this.lastStatusCode == statusCode)
             {
                 return;
             }
 
-            this.statusCode = statusCode;
-            var targetAsDataErrorInfo = this.Target as ISetDataErrorInfo;
+            this.lastStatusCode = statusCode;
+            var targetAsDataErrorInfo = target as ISetDataErrorInfo;
             if (targetAsDataErrorInfo != null)
             {
                 if (!StatusCode.IsGood(statusCode))
@@ -306,71 +266,49 @@ namespace Workstation.ServiceModel.Ua
     /// </summary>
     public class DataValueQueueMonitoredItem : MonitoredItemBase
     {
-        private StatusCode statusCode;
+        private StatusCode lastStatusCode;
 
-        public DataValueQueueMonitoredItem(object target, PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = 13, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
-            : base(property.Name, nodeId, attributeId, indexRange, monitoringMode, samplingInterval, filter, queueSize, discardOldest)
+        public DataValueQueueMonitoredItem(PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = 13, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
+            : base(property, nodeId, attributeId, indexRange, monitoringMode, samplingInterval, filter, queueSize, discardOldest)
         {
-            if (target == null)
-            {
-                throw new ArgumentNullException(nameof(target));
-            }
-
-            if (property == null)
-            {
-                throw new ArgumentNullException(nameof(property));
-            }
-
-            this.Target = target;
-            this.Property = property;
         }
 
-        /// <summary>
-        /// Gets the target object.
-        /// </summary>
-        public object Target { get; }
-
-        /// <summary>
-        /// Gets the property of the target to store the published value.
-        /// </summary>
-        public PropertyInfo Property { get; }
-
-        public override void Publish(DataValue dataValue)
+        public override void Publish(object target, DataValue dataValue)
         {
-            var queue = (ObservableQueue<DataValue>)this.Property.GetValue(this.Target);
+            var queue = (ObservableQueue<DataValue>)this.Property.GetValue(target);
             queue.Enqueue(dataValue);
         }
 
-        public override void Publish(Variant[] eventFields)
+        public override void Publish(object target, Variant[] eventFields)
         {
         }
 
-        public override bool TryGetValue(out DataValue value)
+        public override bool TryGetValue(object target, out DataValue value)
         {
             value = default(DataValue);
             return false;
         }
 
-        public override void OnCreateResult(MonitoredItemCreateResult result)
+        public override void OnCreateResult(object target, MonitoredItemCreateResult result)
         {
             this.ServerId = result.MonitoredItemId;
-            this.SetDataErrorInfo(result.StatusCode);
+            this.SetDataErrorInfo(target, result.StatusCode);
         }
 
-        public override void OnWriteResult(StatusCode statusCode)
+        public override void OnWriteResult(object target, StatusCode statusCode)
         {
-            this.SetDataErrorInfo(statusCode);
+            this.SetDataErrorInfo(target, statusCode);
         }
 
-        private void SetDataErrorInfo(StatusCode statusCode)
+        private void SetDataErrorInfo(object target, StatusCode statusCode)
         {
-            if (this.statusCode == statusCode)
+            if (this.lastStatusCode == statusCode)
             {
                 return;
             }
 
-            this.statusCode = statusCode;
-            var targetAsDataErrorInfo = this.Target as ISetDataErrorInfo;
+            this.lastStatusCode = statusCode;
+            var targetAsDataErrorInfo = target as ISetDataErrorInfo;
             if (targetAsDataErrorInfo != null)
             {
                 if (!StatusCode.IsGood(statusCode))
@@ -391,71 +329,49 @@ namespace Workstation.ServiceModel.Ua
     /// </summary>
     public class EventMonitoredItem : MonitoredItemBase
     {
-        private StatusCode statusCode;
+        private StatusCode lastStatusCode;
 
-        public EventMonitoredItem(object target, PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = 12, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
-            : base(property.Name, nodeId, attributeId, indexRange, monitoringMode, samplingInterval, filter, queueSize, discardOldest)
-        {
-            if (target == null)
-            {
-                throw new ArgumentNullException(nameof(target));
-            }
-
-            if (property == null)
-            {
-                throw new ArgumentNullException(nameof(property));
-            }
-
-            this.Target = target;
-            this.Property = property;
-        }
-
-        /// <summary>
-        /// Gets the target object.
-        /// </summary>
-        public object Target { get; }
-
-        /// <summary>
-        /// Gets the property of the target to store the published value.
-        /// </summary>
-        public PropertyInfo Property { get; }
-
-        public override void Publish(DataValue dataValue)
+        public EventMonitoredItem(PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = 12, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
+            : base(property, nodeId, attributeId, indexRange, monitoringMode, samplingInterval, filter, queueSize, discardOldest)
         {
         }
 
-        public override void Publish(Variant[] eventFields)
+        public override void Publish(object target, DataValue dataValue)
+        {
+        }
+
+        public override void Publish(object target, Variant[] eventFields)
         {
             var currentEvent = EventHelper.Deserialize(this.Property.PropertyType, eventFields);
-            this.Property.SetValue(this.Target, currentEvent);
+            this.Property.SetValue(target, currentEvent);
         }
 
-        public override bool TryGetValue(out DataValue value)
+        public override bool TryGetValue(object target, out DataValue value)
         {
             value = default(DataValue);
             return false;
         }
 
-        public override void OnCreateResult(MonitoredItemCreateResult result)
+        public override void OnCreateResult(object target, MonitoredItemCreateResult result)
         {
             this.ServerId = result.MonitoredItemId;
-            this.SetDataErrorInfo(result.StatusCode);
+            this.SetDataErrorInfo(target, result.StatusCode);
         }
 
-        public override void OnWriteResult(StatusCode statusCode)
+        public override void OnWriteResult(object target, StatusCode statusCode)
         {
-            this.SetDataErrorInfo(statusCode);
+            this.SetDataErrorInfo(target, statusCode);
         }
 
-        private void SetDataErrorInfo(StatusCode statusCode)
+        private void SetDataErrorInfo(object target, StatusCode statusCode)
         {
-            if (this.statusCode == statusCode)
+            if (this.lastStatusCode == statusCode)
             {
                 return;
             }
 
-            this.statusCode = statusCode;
-            var targetAsDataErrorInfo = this.Target as ISetDataErrorInfo;
+            this.lastStatusCode = statusCode;
+            var targetAsDataErrorInfo = target as ISetDataErrorInfo;
             if (targetAsDataErrorInfo != null)
             {
                 if (!StatusCode.IsGood(statusCode))
@@ -477,72 +393,50 @@ namespace Workstation.ServiceModel.Ua
     public class EventQueueMonitoredItem<T> : MonitoredItemBase
             where T : BaseEvent, new()
     {
-        private StatusCode statusCode;
+        private StatusCode lastStatusCode;
 
-        public EventQueueMonitoredItem(object target, PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = 12, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
-            : base(property.Name, nodeId, attributeId, indexRange, monitoringMode, samplingInterval, filter, queueSize, discardOldest)
-        {
-            if (target == null)
-            {
-                throw new ArgumentNullException(nameof(target));
-            }
-
-            if (property == null)
-            {
-                throw new ArgumentNullException(nameof(property));
-            }
-
-            this.Target = target;
-            this.Property = property;
-        }
-
-        /// <summary>
-        /// Gets the target object.
-        /// </summary>
-        public object Target { get; }
-
-        /// <summary>
-        /// Gets the property of the target to store the published value.
-        /// </summary>
-        public PropertyInfo Property { get; }
-
-        public override void Publish(DataValue dataValue)
+        public EventQueueMonitoredItem(PropertyInfo property, ExpandedNodeId nodeId, uint attributeId = 12, string indexRange = null, MonitoringMode monitoringMode = MonitoringMode.Reporting, int samplingInterval = -1, MonitoringFilter filter = null, uint queueSize = 0, bool discardOldest = true)
+            : base(property, nodeId, attributeId, indexRange, monitoringMode, samplingInterval, filter, queueSize, discardOldest)
         {
         }
 
-        public override void Publish(Variant[] eventFields)
+        public override void Publish(object target, DataValue dataValue)
+        {
+        }
+
+        public override void Publish(object target, Variant[] eventFields)
         {
             var currentEvent = EventHelper.Deserialize<T>(eventFields);
-            var queue = (ObservableQueue<T>)this.Property.GetValue(this.Target);
+            var queue = (ObservableQueue<T>)this.Property.GetValue(target);
             queue.Enqueue(currentEvent);
         }
 
-        public override bool TryGetValue(out DataValue value)
+        public override bool TryGetValue(object target, out DataValue value)
         {
             value = default(DataValue);
             return false;
         }
 
-        public override void OnCreateResult(MonitoredItemCreateResult result)
+        public override void OnCreateResult(object target, MonitoredItemCreateResult result)
         {
             this.ServerId = result.MonitoredItemId;
-            this.SetDataErrorInfo(result.StatusCode);
+            this.SetDataErrorInfo(target, result.StatusCode);
         }
 
-        public override void OnWriteResult(StatusCode statusCode)
+        public override void OnWriteResult(object target, StatusCode statusCode)
         {
-            this.SetDataErrorInfo(statusCode);
+            this.SetDataErrorInfo(target, statusCode);
         }
 
-        private void SetDataErrorInfo(StatusCode statusCode)
+        private void SetDataErrorInfo(object target, StatusCode statusCode)
         {
-            if (this.statusCode == statusCode)
+            if (this.lastStatusCode == statusCode)
             {
                 return;
             }
 
-            this.statusCode = statusCode;
-            var targetAsDataErrorInfo = this.Target as ISetDataErrorInfo;
+            this.lastStatusCode = statusCode;
+            var targetAsDataErrorInfo = target as ISetDataErrorInfo;
             if (targetAsDataErrorInfo != null)
             {
                 if (!StatusCode.IsGood(statusCode))

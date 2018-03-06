@@ -268,7 +268,7 @@ namespace Workstation.ServiceModel.Ua
             }
 
             var trustedCerts = new Org.BouncyCastle.Utilities.Collections.HashSet();
-            var trustedCertsInfo = new DirectoryInfo(Path.Combine(this.pkiPath, "trusted"));
+            var trustedCertsInfo = new DirectoryInfo(Path.Combine(this.pkiPath, "trusted", "certs"));
             if (!trustedCertsInfo.Exists)
             {
                 trustedCertsInfo.Create();
@@ -287,7 +287,7 @@ namespace Workstation.ServiceModel.Ua
             }
 
             var intermediateCerts = new Org.BouncyCastle.Utilities.Collections.HashSet();
-            var intermediateCertsInfo = new DirectoryInfo(Path.Combine(this.pkiPath, "issuer"));
+            var intermediateCertsInfo = new DirectoryInfo(Path.Combine(this.pkiPath, "issuer", "certs"));
             if (!intermediateCertsInfo.Exists)
             {
                 intermediateCertsInfo.Create();
@@ -399,7 +399,7 @@ namespace Workstation.ServiceModel.Ua
 
         private void StoreInRejectedFolder(X509Certificate crt)
         {
-            var crtInfo = new FileInfo(Path.Combine(this.pkiPath, "rejected", $"{crt.SerialNumber}.crt"));
+            var crtInfo = new FileInfo(Path.Combine(this.pkiPath, "rejected", "certs", $"{crt.SerialNumber}.crt"));
             if (!crtInfo.Directory.Exists)
             {
                 Directory.CreateDirectory(crtInfo.DirectoryName);

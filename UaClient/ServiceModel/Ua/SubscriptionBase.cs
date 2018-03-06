@@ -22,25 +22,9 @@ namespace Workstation.ServiceModel.Ua
     /// </summary>
     public abstract class SubscriptionBase : INotifyPropertyChanged, INotifyDataErrorInfo, ISetDataErrorInfo
     {
-        private readonly ActionBlock<PublishResponse> actionBlock;
+        private readonly ErrorsContainer<string> errors;
         private readonly IProgress<CommunicationState> progress;
-        private readonly ILogger logger;
-        private readonly UaApplication application;
-        private volatile bool isPublishing;
-        private volatile UaTcpSessionChannel innerChannel;
-        private volatile uint subscriptionId;
-        private ErrorsContainer<string> errors;
-        private PropertyChangedEventHandler propertyChanged;
-        private string endpointUrl;
-        private double publishingInterval = UaTcpSessionChannel.DefaultPublishingInterval;
-        private uint keepAliveCount = UaTcpSessionChannel.DefaultKeepaliveCount;
-        private uint lifetimeCount;
-        private MonitoredItemBaseCollection monitoredItems = new MonitoredItemBaseCollection();
         private CommunicationState state = CommunicationState.Created;
-        private volatile TaskCompletionSource<bool> whenSubscribed;
-        private volatile TaskCompletionSource<bool> whenUnsubscribed;
-        private CancellationTokenSource stateMachineCts;
-        private Task stateMachineTask;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="SubscriptionBase"/> class.
@@ -56,160 +40,15 @@ namespace Workstation.ServiceModel.Ua
         /// <param name="application">The UaApplication.</param>
         public SubscriptionBase(UaApplication application)
         {
-            this.application = application ?? throw new ArgumentNullException(nameof(application));
-            this.application.Completion.ContinueWith(t => this.stateMachineCts?.Cancel());
-            this.logger = this.application.LoggerFactory?.CreateLogger(this.GetType());
+            if (application == null)
+            {
+                throw new ArgumentNullException(nameof(application));
+            }
+
             this.errors = new ErrorsContainer<string>(p => this.ErrorsChanged?.Invoke(this, new DataErrorsChangedEventArgs(p)));
             this.progress = new Progress<CommunicationState>(s => this.State = s);
-            this.propertyChanged += this.OnPropertyChanged;
-            this.whenSubscribed = new TaskCompletionSource<bool>();
-            this.whenUnsubscribed = new TaskCompletionSource<bool>();
-            this.whenUnsubscribed.TrySetResult(true);
 
-            // register the action to be run on the ui thread, if there is one.
-            if (SynchronizationContext.Current != null)
-            {
-                this.actionBlock = new ActionBlock<PublishResponse>(pr => this.OnPublishResponse(pr), new ExecutionDataflowBlockOptions { SingleProducerConstrained = true, TaskScheduler = TaskScheduler.FromCurrentSynchronizationContext() });
-            }
-            else
-            {
-                this.actionBlock = new ActionBlock<PublishResponse>(pr => this.OnPublishResponse(pr), new ExecutionDataflowBlockOptions { SingleProducerConstrained = true });
-            }
-
-            // read [Subscription] attribute.
-            var typeInfo = this.GetType().GetTypeInfo();
-            var sa = typeInfo.GetCustomAttribute<SubscriptionAttribute>();
-            if (sa != null)
-            {
-                this.endpointUrl = sa.EndpointUrl;
-                this.publishingInterval = sa.PublishingInterval;
-                this.keepAliveCount = sa.KeepAliveCount;
-                this.lifetimeCount = sa.LifetimeCount;
-            }
-
-            // read [MonitoredItem] attributes.
-            foreach (var propertyInfo in typeInfo.DeclaredProperties)
-            {
-                var mia = propertyInfo.GetCustomAttribute<MonitoredItemAttribute>();
-                if (mia == null || string.IsNullOrEmpty(mia.NodeId))
-                {
-                    continue;
-                }
-
-                MonitoringFilter filter = null;
-                if (mia.AttributeId == AttributeIds.Value && (mia.DataChangeTrigger != DataChangeTrigger.StatusValue || mia.DeadbandType != DeadbandType.None))
-                {
-                    filter = new DataChangeFilter() { Trigger = mia.DataChangeTrigger, DeadbandType = (uint)mia.DeadbandType, DeadbandValue = mia.DeadbandValue };
-                }
-
-                var propType = propertyInfo.PropertyType;
-                if (propType == typeof(DataValue))
-                {
-                    this.monitoredItems.Add(new DataValueMonitoredItem(
-                        target: this,
-                        property: propertyInfo,
-                        nodeId: ExpandedNodeId.Parse(mia.NodeId),
-                        indexRange: mia.IndexRange,
-                        attributeId: mia.AttributeId,
-                        samplingInterval: mia.SamplingInterval,
-                        filter: filter,
-                        queueSize: mia.QueueSize,
-                        discardOldest: mia.DiscardOldest));
-                    continue;
-                }
-
-                if (propType == typeof(BaseEvent) || propType.GetTypeInfo().IsSubclassOf(typeof(BaseEvent)))
-                {
-                    this.monitoredItems.Add(new EventMonitoredItem(
-                        target: this,
-                        property: propertyInfo,
-                        nodeId: ExpandedNodeId.Parse(mia.NodeId),
-                        indexRange: mia.IndexRange,
-                        attributeId: mia.AttributeId,
-                        samplingInterval: mia.SamplingInterval,
-                        filter: new EventFilter() { SelectClauses = EventHelper.GetSelectClauses(propType) },
-                        queueSize: mia.QueueSize,
-                        discardOldest: mia.DiscardOldest));
-                    continue;
-                }
-
-                if (propType == typeof(ObservableQueue<DataValue>))
-                {
-                    this.monitoredItems.Add(new DataValueQueueMonitoredItem(
-                        target: this,
-                        property: propertyInfo,
-                        nodeId: ExpandedNodeId.Parse(mia.NodeId),
-                        indexRange: mia.IndexRange,
-                        attributeId: mia.AttributeId,
-                        samplingInterval: mia.SamplingInterval,
-                        filter: filter,
-                        queueSize: mia.QueueSize,
-                        discardOldest: mia.DiscardOldest));
-                    continue;
-                }
-
-                if (propType.IsConstructedGenericType && propType.GetGenericTypeDefinition() == typeof(ObservableQueue<>))
-                {
-                    var elemType = propType.GenericTypeArguments[0];
-                    if (elemType == typeof(BaseEvent) || elemType.GetTypeInfo().IsSubclassOf(typeof(BaseEvent)))
-                    {
-                        this.monitoredItems.Add((MonitoredItemBase)Activator.CreateInstance(
-                        typeof(EventQueueMonitoredItem<>).MakeGenericType(elemType),
-                        this,
-                        propertyInfo,
-                        ExpandedNodeId.Parse(mia.NodeId),
-                        mia.AttributeId,
-                        mia.IndexRange,
-                        MonitoringMode.Reporting,
-                        mia.SamplingInterval,
-                        new EventFilter() { SelectClauses = EventHelper.GetSelectClauses(elemType) },
-                        mia.QueueSize,
-                        mia.DiscardOldest));
-                        continue;
-                    }
-                }
-
-                this.monitoredItems.Add(new ValueMonitoredItem(
-                    target: this,
-                    property: propertyInfo,
-                    nodeId: ExpandedNodeId.Parse(mia.NodeId),
-                    indexRange: mia.IndexRange,
-                    attributeId: mia.AttributeId,
-                    samplingInterval: mia.SamplingInterval,
-                    filter: filter,
-                    queueSize: mia.QueueSize,
-                    discardOldest: mia.DiscardOldest));
-
-            }
-
-            this.stateMachineCts = new CancellationTokenSource();
-            this.stateMachineTask = Task.Run(() => this.StateMachineAsync(this.stateMachineCts.Token));
-        }
-
-        /// <inheritdoc/>
-        public event PropertyChangedEventHandler PropertyChanged
-        {
-            add
-            {
-                var flag = this.propertyChanged.GetInvocationList().Length == 1;
-                this.propertyChanged += value;
-                if (flag)
-                {
-                    this.whenUnsubscribed = new TaskCompletionSource<bool>();
-                    this.whenSubscribed.TrySetResult(true);
-
-                }
-            }
-
-            remove
-            {
-                this.propertyChanged -= value;
-                if (this.propertyChanged.GetInvocationList().Length == 1)
-                {
-                    this.whenSubscribed = new TaskCompletionSource<bool>();
-                    this.whenUnsubscribed.TrySetResult(true);
-                }
-            }
+            application.Subscribe(this);
         }
 
         /// <summary>
@@ -222,23 +61,18 @@ namespace Workstation.ServiceModel.Ua
         }
 
         /// <summary>
-        /// Gets the current subscription Id.
-        /// </summary>
-        public uint SubscriptionId => this.state == CommunicationState.Opened ? this.subscriptionId : 0u;
-
-        /// <summary>
         /// Requests a Refresh of all Conditions.
         /// </summary>
         /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-        public async Task<StatusCode> ConditionRefreshAsync()
-        {
-            if (this.State != CommunicationState.Opened)
-            {
-                return StatusCodes.BadServerNotConnected;
-            }
+        //public async Task<StatusCode> ConditionRefreshAsync()
+        //{
+        //    if (this.State != CommunicationState.Opened)
+        //    {
+        //        return StatusCodes.BadServerNotConnected;
+        //    }
 
-            return await this.InnerChannel.ConditionRefreshAsync(this.SubscriptionId);
-        }
+        //    return await this.InnerChannel.ConditionRefreshAsync(this.SubscriptionId);
+        //}
 
         /// <summary>
         /// Acknowledges a condition.
@@ -246,36 +80,39 @@ namespace Workstation.ServiceModel.Ua
         /// <param name="condition">an AcknowledgeableCondition.</param>
         /// <param name="comment">a comment.</param>
         /// <returns>A <see cref="Task"/> representing the asynchronous operation.</returns>
-        public async Task<StatusCode> AcknowledgeAsync(AcknowledgeableCondition condition, LocalizedText comment = null)
-        {
-            if (condition == null)
-            {
-                throw new ArgumentNullException(nameof(condition));
-            }
+        //public async Task<StatusCode> AcknowledgeAsync(AcknowledgeableCondition condition, LocalizedText comment = null)
+        //{
+        //    if (condition == null)
+        //    {
+        //        throw new ArgumentNullException(nameof(condition));
+        //    }
 
-            if (this.State != CommunicationState.Opened)
-            {
-                return StatusCodes.BadServerNotConnected;
-            }
+        //    if (this.State != CommunicationState.Opened)
+        //    {
+        //        return StatusCodes.BadServerNotConnected;
+        //    }
 
-            return await this.InnerChannel.AcknowledgeAsync(condition, comment);
-        }
+        //    return await this.InnerChannel.AcknowledgeAsync(condition, comment);
+        //}
+
+        /// <inheritdoc/>
+        public event PropertyChangedEventHandler PropertyChanged;
 
         /// <summary>
         /// Gets the inner channel.
         /// </summary>
-        protected UaTcpSessionChannel InnerChannel
-        {
-            get
-            {
-                if (this.innerChannel == null)
-                {
-                    throw new ServiceResultException(StatusCodes.BadServerNotConnected);
-                }
+        //protected UaTcpSessionChannel InnerChannel
+        //{
+        //    get
+        //    {
+        //        if (this.innerChannel == null)
+        //        {
+        //            throw new ServiceResultException(StatusCodes.BadServerNotConnected);
+        //        }
 
-                return this.innerChannel;
-            }
-        }
+        //        return this.innerChannel;
+        //    }
+        //}
 
         /// <summary>
         /// Sets the property value and notifies listeners that the property value has changed.
@@ -307,7 +144,7 @@ namespace Workstation.ServiceModel.Ua
         /// that support <see cref="T:System.Runtime.CompilerServices.CallerMemberNameAttribute" />.</param>
         protected virtual void NotifyPropertyChanged([CallerMemberName] string propertyName = null)
         {
-            this.propertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+            this.PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
         }
 
         /// <summary>
@@ -341,273 +178,6 @@ namespace Workstation.ServiceModel.Ua
         void ISetDataErrorInfo.SetErrors(string propertyName, IEnumerable<string> errors)
         {
             this.errors.SetErrors(propertyName, errors);
-        }
-
-        /// <summary>
-        /// Handle PublishResponse message.
-        /// </summary>
-        /// <param name="publishResponse">The publish response.</param>
-        private void OnPublishResponse(PublishResponse publishResponse)
-        {
-            this.isPublishing = true;
-            try
-            {
-                // loop thru all the notifications
-                var nd = publishResponse.NotificationMessage?.NotificationData;
-                if (nd == null)
-                {
-                    return;
-                }
-
-                foreach (var n in nd)
-                {
-                    // if data change.
-                    var dcn = n as DataChangeNotification;
-                    if (dcn != null)
-                    {
-                        MonitoredItemBase item;
-                        foreach (var min in dcn.MonitoredItems)
-                        {
-                            if (this.monitoredItems.TryGetValueByClientId(min.ClientHandle, out item))
-                            {
-                                try
-                                {
-                                    item.Publish(min.Value);
-                                }
-                                catch (Exception ex)
-                                {
-                                    this.logger?.LogError($"Error publishing value for NodeId {item.NodeId}. {ex.Message}");
-                                }
-                            }
-                        }
-
-                        continue;
-                    }
-
-                    // if event.
-                    var enl = n as EventNotificationList;
-                    if (enl != null)
-                    {
-                        MonitoredItemBase item;
-                        foreach (var efl in enl.Events)
-                        {
-                            if (this.monitoredItems.TryGetValueByClientId(efl.ClientHandle, out item))
-                            {
-                                try
-                                {
-                                    item.Publish(efl.EventFields);
-                                }
-                                catch (Exception ex)
-                                {
-                                    this.logger?.LogError($"Error publishing event for NodeId {item.NodeId}. {ex.Message}");
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            finally
-            {
-                this.isPublishing = false;
-            }
-        }
-
-        /// <summary>
-        /// Handles PropertyChanged event. If the property is associated with a MonitoredItem, writes the property value to the node of the server.
-        /// </summary>
-        /// <param name="sender">the sender.</param>
-        /// <param name="e">the event.</param>
-        private async void OnPropertyChanged(object sender, PropertyChangedEventArgs e)
-        {
-            if (this.isPublishing || string.IsNullOrEmpty(e.PropertyName))
-            {
-                return;
-            }
-
-            MonitoredItemBase item;
-            if (this.monitoredItems.TryGetValueByName(e.PropertyName, out item))
-            {
-                DataValue value;
-                if (item.TryGetValue(out value))
-                {
-                    StatusCode statusCode;
-                    var writeRequest = new WriteRequest
-                    {
-                        NodesToWrite = new[] { new WriteValue { NodeId = ExpandedNodeId.ToNodeId(item.NodeId, this.InnerChannel.NamespaceUris), AttributeId = item.AttributeId, IndexRange = item.IndexRange, Value = value } }
-                    };
-                    try
-                    {
-                        var writeResponse = await this.InnerChannel.WriteAsync(writeRequest).ConfigureAwait(false);
-                        statusCode = writeResponse.Results[0];
-                    }
-                    catch (ServiceResultException ex)
-                    {
-                        statusCode = ex.StatusCode;
-                    }
-                    catch (Exception)
-                    {
-                        statusCode = StatusCodes.BadServerNotConnected;
-                    }
-
-                    item.OnWriteResult(statusCode);
-                    if (StatusCode.IsBad(statusCode))
-                    {
-                        this.logger?.LogError($"Error writing value for {item.NodeId}. {StatusCodes.GetDefaultMessage(statusCode)}");
-                    }
-                }
-            }
-        }
-
-        /// <summary>
-        /// Signals the channel state is Closing.
-        /// </summary>
-        /// <param name="channel">The session channel. </param>
-        /// <param name="token">A cancellation token. </param>
-        /// <returns>A task.</returns>
-        private async Task WhenChannelClosingAsync(UaTcpSessionChannel channel, CancellationToken token = default(CancellationToken))
-        {
-            var tcs = new TaskCompletionSource<bool>();
-            EventHandler handler = (o, e) =>
-            {
-                tcs.TrySetResult(true);
-            };
-            using (token.Register(state => ((TaskCompletionSource<bool>)state).TrySetCanceled(), tcs, false))
-            {
-                try
-                {
-                    channel.Closing += handler;
-                    if (channel.State == CommunicationState.Opened)
-                    {
-                        await tcs.Task;
-                    }
-                }
-                finally
-                {
-                    channel.Closing -= handler;
-                }
-            }
-        }
-
-        /// <summary>
-        /// The state machine manages the state of the subscription.
-        /// </summary>
-        /// <param name="token">A cancellation token.</param>
-        /// <returns>A task.</returns>
-        private async Task StateMachineAsync(CancellationToken token = default(CancellationToken))
-        {
-            while (!token.IsCancellationRequested)
-            {
-                await this.whenSubscribed.Task;
-
-                this.progress.Report(CommunicationState.Opening);
-
-                try
-                {
-                    // get a channel.
-                    this.innerChannel = await this.application.GetChannelAsync(this.endpointUrl, token);
-
-                    try
-                    {
-                        // create the subscription.
-                        var subscriptionRequest = new CreateSubscriptionRequest
-                        {
-                            RequestedPublishingInterval = this.publishingInterval,
-                            RequestedMaxKeepAliveCount = this.keepAliveCount,
-                            RequestedLifetimeCount = Math.Max(this.lifetimeCount, 3 * this.keepAliveCount),
-                            PublishingEnabled = true
-                        };
-                        var subscriptionResponse = await this.innerChannel.CreateSubscriptionAsync(subscriptionRequest).ConfigureAwait(false);
-
-                        // link up the dataflow blocks
-                        var id = this.subscriptionId = subscriptionResponse.SubscriptionId;
-                        var linkToken = this.innerChannel.LinkTo(this.actionBlock, pr => pr.SubscriptionId == id);
-
-                        try
-                        {
-                            // create the monitored items.
-                            var items = this.monitoredItems.ToList();
-                            if (items.Count > 0)
-                            {
-                                var requests = items.Select(m => new MonitoredItemCreateRequest { ItemToMonitor = new ReadValueId { NodeId = ExpandedNodeId.ToNodeId(m.NodeId, this.InnerChannel.NamespaceUris), AttributeId = m.AttributeId, IndexRange = m.IndexRange }, MonitoringMode = m.MonitoringMode, RequestedParameters = new MonitoringParameters { ClientHandle = m.ClientId, DiscardOldest = m.DiscardOldest, QueueSize = m.QueueSize, SamplingInterval = m.SamplingInterval, Filter = m.Filter } }).ToArray();
-                                var itemsRequest = new CreateMonitoredItemsRequest
-                                {
-                                    SubscriptionId = id,
-                                    ItemsToCreate = requests,
-                                };
-                                var itemsResponse = await this.innerChannel.CreateMonitoredItemsAsync(itemsRequest);
-                                for (int i = 0; i < itemsResponse.Results.Length; i++)
-                                {
-                                    var item = items[i];
-                                    var result = itemsResponse.Results[i];
-                                    item.OnCreateResult(result);
-                                    if (StatusCode.IsBad(result.StatusCode))
-                                    {
-                                        this.logger?.LogError($"Error creating MonitoredItem for {item.NodeId}. {StatusCodes.GetDefaultMessage(result.StatusCode)}");
-                                    }
-                                }
-                            }
-
-                            this.progress.Report(CommunicationState.Opened);
-
-                            // wait here until channel is closing, unsubscribed or token cancelled.
-                            try
-                            {
-                                await Task.WhenAny(
-                                    this.WhenChannelClosingAsync(this.innerChannel, token),
-                                    this.whenUnsubscribed.Task);
-                            }
-                            catch
-                            {
-                            }
-                            finally
-                            {
-                                this.progress.Report(CommunicationState.Closing);
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            this.logger?.LogError($"Error creating MonitoredItems. {ex.Message}");
-                            this.progress.Report(CommunicationState.Faulted);
-                        }
-                        finally
-                        {
-                            linkToken.Dispose();
-                        }
-
-                        if (this.innerChannel.State == CommunicationState.Opened)
-                        {
-                            try
-                            {
-                                // delete the subscription.
-                                var deleteRequest = new DeleteSubscriptionsRequest
-                                {
-                                    SubscriptionIds = new uint[] { id }
-                                };
-                                await this.innerChannel.DeleteSubscriptionsAsync(deleteRequest);
-                            }
-                            catch (Exception ex)
-                            {
-                                this.logger?.LogError($"Error deleting subscription. {ex.Message}");
-                                await Task.Delay(2000);
-                            }
-                        }
-
-                        this.progress.Report(CommunicationState.Closed);
-                    }
-                    catch (Exception ex)
-                    {
-                        this.logger?.LogError($"Error creating subscription. {ex.Message}");
-                        this.progress.Report(CommunicationState.Faulted);
-                        await Task.Delay(2000);
-                    }
-                }
-                catch (Exception ex)
-                {
-                    this.logger?.LogTrace($"Error getting channel. {ex.Message}");
-                    this.progress.Report(CommunicationState.Faulted);
-                    await Task.Delay(2000);
-                }
-            }
         }
     }
 }

@@ -43,19 +43,6 @@ namespace Workstation.ServiceModel.Ua
             this.TypeId = typeId;
         }
 
-        public ExtensionObject(IEncodable body, ExpandedNodeId typeId)
-        {
-            if (body == null)
-            {
-                this.BodyType = BodyType.None;
-                return;
-            }
-
-            this.Body = body;
-            this.BodyType = BodyType.Encodable;
-            this.TypeId = typeId;
-        }
-
         public ExtensionObject(IEncodable body)
         {
             if (body == null)
@@ -66,7 +53,6 @@ namespace Workstation.ServiceModel.Ua
 
             this.Body = body;
             this.BodyType = BodyType.Encodable;
-            this.TypeId = body.GetType().GetTypeInfo().GetCustomAttribute<BinaryEncodingIdAttribute>(false)?.NodeId ?? throw new ServiceResultException(StatusCodes.BadDataEncodingUnsupported);
         }
 
         public object Body { get; }
